@@ -1,0 +1,161 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: 'Baseball result notifier'
+Parameters:
+  Team:
+    Type: String
+    Default: Carp
+    AllowedValues:
+      - Carp
+      - Tigers
+      - BayStars
+      - Giants
+      - Swallows
+      - Dragons
+  NotificationEmail:
+    Type: String
+    AllowedPattern: >-
+      ([a-zA-Z0-9_\-\.]+)@((\[[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.)|(([a-zA-Z0-9\-]+\.)+))([a-zA-Z]{2,4}|[0-9]{1,3})(\]?)
+    ConstraintDescription: must be a valid email address.
+Mappings:
+  TeamNames:
+    Carp:
+      Name: '広島'
+    Tigers:
+      Name: '阪神'
+    BayStars:
+      Name: 'ＤｅＮＡ'
+    Giants:
+      Name: '巨人'
+    Swallows:
+      Name: 'ヤクルト'
+    Dragons:
+      Name: '中日'
+Resources:
+  NotificationTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: 'baseball result'
+      Subscription:
+        - Endpoint: !Ref NotificationEmail
+          Protocol: email
+  Schedule:
+    Type: "AWS::Events::Rule"
+    Properties:
+      ScheduleExpression: "cron(0 3 * * ? *)"
+      Targets:
+      - Arn: !GetAtt LambdaFunction.Arn
+        Id: TargetFunctionV1
+  PermissionInvokeLambdaFunction:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName:
+        Ref: LambdaFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt Schedule.Arn
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          -
+            Effect: 'Allow'
+            Principal:
+              Service: ['lambda.amazonaws.com']
+            Action: ['sts:AssumeRole']
+      Policies:
+        - PolicyName: sns
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: 'Allow'
+                Action:
+                  - 'sns:*'
+                Resource: '*'
+        - PolicyName: logs
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'logs:*'
+                Resource: 'arn:aws:logs:*:*:*'
+  LambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code:
+        ZipFile: |
+          #-* coding: utf-8 -*-
+          import boto3
+          import datetime
+          import os
+          import re
+          import urllib2
+          
+          TITLE = u"{team} {date} の結果[{result}]"
+          TEXT = u"""- {date:%Y/%m/%d} の結果
+          
+           !{result}! {team}({score}) - {opponent}({opponent_score})
+          
+          - 順位
+          
+            1. {standings[0][0]}
+            2. {standings[1][0]} ({standings[1][1]})
+            3. {standings[2][0]} ({standings[2][1]})
+            4. {standings[3][0]} ({standings[3][1]})
+            5. {standings[4][0]} ({standings[4][1]})
+            6. {standings[5][0]} ({standings[5][1]})
+          """
+          
+          def get_result(team, day):
+              html = urllib2.urlopen("https://baseball.yahoo.co.jp/npb/schedule/?&date={0:%Y%m%d}".format(day)).read()
+              teams = [t.decode("utf-8") for t in re.findall(r'<a href="/npb/teams/\d+/" title="(.*?)"', html)]
+              scores = re.findall(r'<td class="score_r">(?:<strong>)?(\d+)(?:</strong>)?</td>', html)
+              if len(teams) != 12 or len(scores) != 12:
+                  raise RuntimeError("No result")
+              try:
+                  for index in range(6):
+                      for side in range(2):
+                          if teams[index*2+side] == team:
+                              raise StopIteration()
+              except StopIteration:
+                  pass
+              result = {}
+              result["score"] = scores[index*2+side]
+              result["opponent"] = teams[index*2+1-side]
+              result["opponent_score"] = scores[index*2+1-side]
+              if result["score"] > result["opponent_score"]:
+                  result["result"] = "WIN"
+              elif result["score"] < result["opponent_score"]:
+                  result["result"] = "LOOSE"
+              else:
+                  result["result"] = "DRAW"
+              return result
+          
+          def get_standings():
+              html = urllib2.urlopen("https://baseball.yahoo.co.jp/npb/standings/1/").read()
+              stadings = [(s[0].decode("utf-8"), s[1]) for s in re.findall(r'<a href="https://baseball.yahoo.co.jp/npb/teams/\d/" class="\w+" title="(.*?)".*?</a></td>(?:\n<td>[\d\.]+?</td>){5}\n?<td>(.*?)</td>', html)]
+              return {"standings": stadings}
+
+          def lambda_handler(event, context):
+              day = datetime.date.today() - datetime.timedelta(1)
+              team = os.environ['TEAM'].decode("utf-8")
+              result = {"team": team, "date": day}
+              result.update(get_result(team, day))
+              result.update(get_standings())
+              client = boto3.client('sns')
+              response = client.publish(
+                  TopicArn=os.environ['TOPIC_ARN'],
+                  Message=TEXT.format(**result),
+                  Subject=TITLE.format(**result)
+              )
+      Description: 'Baseball result notifier'
+      Environment:
+        Variables:
+          TEAM:
+            "Fn::FindInMap": [ TeamNames, !Ref Team, Name ]
+          TOPIC_ARN: !Ref NotificationTopic
+      Handler: index.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Runtime: python2.7

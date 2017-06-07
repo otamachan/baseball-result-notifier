@@ -106,6 +106,8 @@ Resources:
             4. {standings[3][0]} ({standings[3][1]})
             5. {standings[4][0]} ({standings[4][1]})
             6. {standings[5][0]} ({standings[5][1]})
+
+            https://baseball.yahoo.co.jp/npb/standings/
           """
           
           def get_result(team, day):

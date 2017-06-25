@@ -124,9 +124,9 @@ Resources:
               except StopIteration:
                   pass
               result = {}
-              result["score"] = scores[index*2+side]
+              result["score"] = int(scores[index*2+side])
               result["opponent"] = teams[index*2+1-side]
-              result["opponent_score"] = scores[index*2+1-side]
+              result["opponent_score"] = int(scores[index*2+1-side])
               if result["score"] > result["opponent_score"]:
                   result["result"] = "WIN"
               elif result["score"] < result["opponent_score"]:

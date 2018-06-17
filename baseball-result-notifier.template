@@ -93,7 +93,7 @@ Resources:
           import re
           import urllib2
           
-          TITLE = u"{team} {date} の結果[{result}]"
+          TITLE = u"[{result}]{team} {date} の結果"
           TEXT = u"""- {date:%Y/%m/%d} の結果
           
            !{result}! {team}({score}) - {opponent}({opponent_score})
